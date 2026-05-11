@@ -1,0 +1,40 @@
+{
+  "name": "calguard",
+  "version": "1.0.0",
+  "description": "智能日程守护助手 - CalGuard Agent",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "calguard": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/index.ts",
+    "start": "node dist/cli/index.ts start",
+    "setup": "node dist/cli/index.ts setup",
+    "fetch": "node dist/cli/index.ts fetch",
+    "events": "node dist/cli/index.ts events",
+    "preview": "node dist/cli/index.ts preview",
+    "status": "node dist/cli/index.ts status",
+    "config:validate": "node dist/cli/index.ts config validate"
+  },
+  "dependencies": {
+    "commander": "^13.1.0",
+    "imap": "^0.8.19",
+    "mailparser": "^3.7.2",
+    "node-cron": "^3.0.3",
+    "nodemailer": "^7.0.3",
+    "sql.js": "^1.11.0",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/imap": "^0.8.43",
+    "@types/mailparser": "^3.4.5",
+    "@types/node": "^22.13.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/nodemailer": "^6.4.17",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,92 @@
+# ── 数据源配置 ──
+sources:
+  calendars:
+    # Apple Calendar（macOS，通过 AppleScript 读取）
+    - type: apple
+      enabled: true
+      skip_calendars:
+        - "个人"
+        - "香港節日"
+        - "中国大陆节假日"
+      timeout_seconds: 45
+
+    # Google Calendar（需要 OAuth 凭证）
+    # - type: google
+    #   enabled: false
+    #   credentials_file: ~/.calguard/google_credentials.json
+    #   calendar_ids:
+    #     - primary
+
+    # 飞书日历
+    # - type: feishu
+    #   enabled: false
+    #   app_id: ${FEISHU_APP_ID}
+    #   app_secret: ${FEISHU_APP_SECRET}
+
+  messages:
+    # macOS Mail 本地 SQLite 数据库（无需额外配置）
+    - type: mac_mail
+      enabled: true
+      db_path: ~/Library/Mail/V10/MailData/Envelope Index
+
+    # IMAP 邮件（Gmail / 企业邮箱 / Outlook）
+    # - type: email
+    #   enabled: false
+    #   imap:
+    #     host: imap.gmail.com
+    #     port: 993
+    #     tls: true
+    #     user: you@gmail.com
+    #     password: ${EMAIL_PASSWORD}
+    #     folders: [INBOX, Sent]
+
+    # 飞书消息
+    # - type: feishu_message
+    #   enabled: false
+    #   app_id: ${FEISHU_APP_ID}
+    #   app_secret: ${FEISHU_APP_SECRET}
+
+# ── 处理引擎参数 ──
+engine:
+  fetch_interval_minutes: 30       # 消息拉取间隔（分钟）
+  lookback_days: 3                 # 消息回溯天数
+  summary_mode: standard           # 摘要模式: concise | standard | detailed
+  skip_summary_if_no_match: true   # 无相关消息时跳过摘要
+  correlation_threshold: 0.3       # 关联度阈值
+
+# ── 提醒配置 ──
+notifications:
+  remind_at:
+    - 24h   # 日程前 24 小时推送完整简报
+    - 1h    # 日程前 1 小时推送 checklist
+
+  channels:
+    # WorkBuddy 推送（stdout → 微信）
+    - type: workbuddy
+      enabled: true
+      template: full
+
+    # 飞书机器人
+    # - type: feishu_bot
+    #   enabled: false
+    #   webhook: https://open.feishu.cn/open-apis/bot/v2/hook/xxx
+    #   secret: ${FEISHU_BOT_SECRET}
+    #   template: full
+
+    # 邮件主送自己
+    # - type: email
+    #   enabled: false
+    #   smtp:
+    #     host: smtp.gmail.com
+    #     port: 587
+    #     user: you@gmail.com
+    #     password: ${EMAIL_PASSWORD}
+    #     to: you@gmail.com
+    #     subject_prefix: "[CalGuard]"
+
+# ── LLM 配置 ──
+llm:
+  provider: none       # anthropic | openai | none（none 时跳过 LLM 摘要）
+  model: claude-sonnet-4-20250514
+  api_key: ${ANTHROPIC_API_KEY}
+  max_tokens: 1000

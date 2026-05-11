@@ -1,0 +1,30 @@
+node_modules/
+dist/
+*.js.map
+*.d.ts
+*.d.ts.map
+
+# 数据目录
+.calguard/
+
+# 配置文件（包含敏感信息）
+config.yaml
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+# 日志
+*.log
+npm-debug.log*
