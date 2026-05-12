@@ -1,79 +1,146 @@
-# ── 数据源配置 ──
+# ═══════════════════════════════════════════════════════════════
+# CalGuard 配置文件
+# 智能日程守护助手 — 自动读取日历和邮件，推送日程简报
+# ═══════════════════════════════════════════════════════════════
+#
+# 使用方法：
+#   1. 复制此文件为 config.yaml: cp config.example.yaml config.yaml
+#   2. 按需启用数据源和通知渠道
+#   3. 填入必要的 API Key 和账号信息
+#   4. 运行 calguard config validate 校验配置
+#
+# 环境变量支持：
+#   配置值中使用 ${ENV_VAR} 语法引用环境变量
+#   例如：password: ${EMAIL_PASSWORD}
+#   敏感信息建议通过环境变量传入，不要明文写在配置文件中
+# ═══════════════════════════════════════════════════════════════
+
+# ── 数据源配置 ──────────────────────────────────────────────
+# 数据源分为日历源和消息源，可同时启用多个
 sources:
   calendars:
-    # Apple Calendar（macOS，通过 AppleScript 读取）
+    # ── Apple Calendar（macOS，通过 AppleScript 读取）──
+    # 无需额外配置，macOS 自带
+    # 首次使用需在：系统偏好设置 → 安全性与隐私 → 辅助功能 → 添加 Terminal
     - type: apple
       enabled: true
-      skip_calendars:
+      skip_calendars:          # 跳过内容过多的日历，避免 AppleScript 超时
         - "个人"
         - "香港節日"
         - "中国大陆节假日"
-      timeout_seconds: 45
+      timeout_seconds: 45      # 单个日历的读取超时时间
 
-    # Google Calendar（需要 OAuth 凭证）
+    # ── Google Calendar（需要 OAuth 凭证）──
+    # 申请步骤：https://github.com/Cao150702/calguard#google-calendar
     # - type: google
     #   enabled: false
     #   credentials_file: ~/.calguard/google_credentials.json
     #   calendar_ids:
     #     - primary
 
-    # 飞书日历
+    # ── 飞书日历 ──
+    # 申请步骤：https://github.com/Cao150702/calguard#飞书日历
     # - type: feishu
     #   enabled: false
     #   app_id: ${FEISHU_APP_ID}
     #   app_secret: ${FEISHU_APP_SECRET}
 
+    # ── 钉钉日历 ──
+    # - type: dingtalk
+    #   enabled: false
+    #   app_key: ${DINGTALK_APP_KEY}
+    #   app_secret: ${DINGTALK_APP_SECRET}
+    #   union_id: ${DINGTALK_UNION_ID}
+
   messages:
-    # macOS Mail 本地 SQLite 数据库（无需额外配置）
+    # ── Mac Mail（macOS 本地 SQLite，无需配置）──
+    # 需要完全磁盘访问权限：
+    # 系统偏好设置 → 安全性与隐私 → 完全磁盘访问权限 → 添加 Terminal
     - type: mac_mail
       enabled: true
       db_path: ~/Library/Mail/V10/MailData/Envelope Index
 
-    # IMAP 邮件（Gmail / 企业邮箱 / Outlook）
+    # ── IMAP 邮件（Gmail / 企业邮箱 / Outlook）──
+    # 支持任何标准 IMAP 服务器
+    # Gmail 需要使用 App Password：Google 账号 → 安全性 → 两步验证 → App Password
     # - type: email
     #   enabled: false
     #   imap:
-    #     host: imap.gmail.com
-    #     port: 993
-    #     tls: true
-    #     user: you@gmail.com
-    #     password: ${EMAIL_PASSWORD}
-    #     folders: [INBOX, Sent]
+    #     host: imap.gmail.com          # IMAP 服务器地址
+    #     port: 993                     # 端口（SSL 默认 993，STARTTLS 默认 143）
+    #     tls: true                     # 是否启用 TLS
+    #     user: you@gmail.com           # 邮箱账号
+    #     password: ${EMAIL_PASSWORD}   # 邮箱密码或 App Password
+    #     folders: [INBOX, Sent]        # 要读取的文件夹
 
-    # 飞书消息
+    # ── 飞书消息 ──
+    # 需要在飞书应用中添加 im:message:readonly 权限
     # - type: feishu_message
     #   enabled: false
-    #   app_id: ${FEISHU_APP_ID}
+    #   app_id: ${FEISHU_APP_ID}        # 与日历可共用同一应用
     #   app_secret: ${FEISHU_APP_SECRET}
 
-# ── 处理引擎参数 ──
+    # ── 微信本地数据库（需用户授权，数据不上传）──
+    # 需要先运行：calguard setup wechat
+    # - type: wechat_local
+    #   enabled: false
+    #   db_path: ~/.calguard/wechat_decrypted.db
+
+    # ── 短信（macOS，需完全磁盘访问权限）──
+    # - type: sms_local
+    #   enabled: false
+    #   db_path: ~/Library/Messages/chat.db
+
+# ── 处理引擎参数 ────────────────────────────────────────────
 engine:
-  fetch_interval_minutes: 30       # 消息拉取间隔（分钟）
-  lookback_days: 3                 # 消息回溯天数
-  summary_mode: standard           # 摘要模式: concise | standard | detailed
-  skip_summary_if_no_match: true   # 无相关消息时跳过摘要
+  fetch_interval_minutes: 30       # 消息拉取间隔（分钟），建议 15-60
+  lookback_days: 3                 # 消息回溯天数，建议 3-7
+  summary_mode: standard           # 摘要模式:
+                                   #   concise  — 3-5 条 bullet，最省 Token（~200）
+                                   #   standard — 背景待确认行动项（~500）
+                                   #   detailed — 完整时间线+附件清单（~1200）
+  skip_summary_if_no_match: true   # 无相关消息时跳过摘要（省钱！）
   correlation_threshold: 0.3       # 关联度阈值
 
-# ── 提醒配置 ──
+# ── 提醒配置 ────────────────────────────────────────────────
 notifications:
   remind_at:
-    - 24h   # 日程前 24 小时推送完整简报
-    - 1h    # 日程前 1 小时推送 checklist
+    - 24h   # 日程前 24 小时推送完整简报（使用 summary_mode）
+    - 1h    # 日程前 1 小时推送 checklist（自动使用 concise 模式）
 
   channels:
-    # WorkBuddy 推送（stdout → 微信）
+    # ── WorkBuddy 推送（stdout → 微信）──
+    # 最简单的推送方式，输出 Markdown 到 stdout
+    # 配合 WorkBuddy 自动化系统使用，自动推送到微信
     - type: workbuddy
       enabled: true
-      template: full
+      template: full               # full = 完整简报 | checklist = 精简清单
 
-    # 飞书机器人
+    # ── 飞书机器人 ──
+    # 创建步骤：https://github.com/Cao150702/calguard#飞书机器人
     # - type: feishu_bot
     #   enabled: false
-    #   webhook: https://open.feishu.cn/open-apis/bot/v2/hook/xxx
-    #   secret: ${FEISHU_BOT_SECRET}
+    #   webhook: https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx
+    #   secret: ${FEISHU_BOT_SECRET}    # 加签密钥（可选，在机器人安全设置中获取）
     #   template: full
 
-    # 邮件主送自己
+    # ── 钉钉机器人 ──
+    # 创建步骤：https://github.com/Cao150702/calguard#钉钉机器人
+    # - type: dingtalk_bot
+    #   enabled: false
+    #   webhook: https://oapi.dingtalk.com/robot/send?access_token=xxx
+    #   secret: ${DINGTALK_BOT_SECRET}  # 加签密钥（可选）
+
+    # ── 企业微信应用消息 ──
+    # 配置步骤：https://github.com/Cao150702/calguard#企业微信
+    # - type: wecom
+    #   enabled: false
+    #   corp_id: ${WECOM_CORP_ID}       # 企业 ID
+    #   agent_id: ${WECOM_AGENT_ID}     # 应用 ID
+    #   secret: ${WECOM_SECRET}         # 应用 Secret
+    #   to_user: "@all"                 # 接收用户，@all 表示全部
+
+    # ── 邮件通知 ──
     # - type: email
     #   enabled: false
     #   smtp:
@@ -81,12 +148,32 @@ notifications:
     #     port: 587
     #     user: you@gmail.com
     #     password: ${EMAIL_PASSWORD}
-    #     to: you@gmail.com
-    #     subject_prefix: "[CalGuard]"
+    #     to: you@gmail.com             # 接收邮箱
+    #     subject_prefix: "[CalGuard]"   # 邮件主题前缀
 
-# ── LLM 配置 ──
+# ── LLM 配置 ────────────────────────────────────────────────
 llm:
-  provider: none       # anthropic | openai | none（none 时跳过 LLM 摘要）
+  provider: none       # none = 纯本地生成（免费）| anthropic | openai
   model: claude-sonnet-4-20250514
-  api_key: ${ANTHROPIC_API_KEY}
+  api_key: ${ANTHROPIC_API_KEY}   # 设为 none 时此字段忽略
   max_tokens: 1000
+
+# ═══════════════════════════════════════════════════════════════
+# 环境变量速查表
+# ═══════════════════════════════════════════════════════════════
+#
+# 变量名                   用途                    获取方式
+# ──────────────────────────────────────────────────────────────
+# ANTHROPIC_API_KEY       Claude API 密钥         https://console.anthropic.com
+# OPENAI_API_KEY          OpenAI API 密钥          https://platform.openai.com
+# EMAIL_PASSWORD          邮箱密码/App Password    邮箱设置中生成
+# FEISHU_APP_ID           飞书应用 ID              飞书开放平台
+# FEISHU_APP_SECRET       飞书应用密钥             飞书开放平台
+# FEISHU_BOT_SECRET       飞书机器人加签密钥       机器人安全设置
+# DINGTALK_APP_KEY        钉钉应用 Key            钉钉开放平台
+# DINGTALK_APP_SECRET     钉钉应用密钥            钉钉开放平台
+# DINGTALK_BOT_SECRET     钉钉机器人加签密钥      机器人安全设置
+# WECOM_CORP_ID           企业微信企业 ID          企业微信管理后台
+# WECOM_AGENT_ID          企业微信应用 ID          应用管理
+# WECOM_SECRET            企业微信应用密钥         应用管理
+# ═══════════════════════════════════════════════════════════════

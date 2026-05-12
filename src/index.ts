@@ -1,8 +1,11 @@
 export { AppleCalendarSource } from "./sources/calendar/apple.js";
 export { MacMailSource } from "./sources/messages/mac_mail.js";
+export { EmailSource } from "./sources/messages/email.js";
 export { WorkbuddyNotifier } from "./notifiers/workbuddy.js";
 export { FeishuNotifier } from "./notifiers/feishu.js";
 export { EmailNotifier } from "./notifiers/email.js";
+export { DingtalkNotifier } from "./notifiers/dingtalk.js";
+export { WecomNotifier } from "./notifiers/wecom.js";
 export { MessageIndexer } from "./engine/indexer.js";
 export { extractKeywords } from "./engine/extractor.js";
 export { generateBrief } from "./engine/summarizer.js";

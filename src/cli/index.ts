@@ -2,9 +2,12 @@ import { Command } from "commander";
 import { loadConfig, ensureDataDir } from "../config/loader.js";
 import { AppleCalendarSource } from "../sources/calendar/apple.js";
 import { MacMailSource } from "../sources/messages/mac_mail.js";
+import { EmailSource } from "../sources/messages/email.js";
 import { WorkbuddyNotifier } from "../notifiers/workbuddy.js";
 import { FeishuNotifier } from "../notifiers/feishu.js";
 import { EmailNotifier } from "../notifiers/email.js";
+import { DingtalkNotifier } from "../notifiers/dingtalk.js";
+import { WecomNotifier } from "../notifiers/wecom.js";
 import { CalGuardScheduler } from "../scheduler/cron.js";
 import { MessageIndexer } from "../engine/indexer.js";
 import { extractKeywords } from "../engine/extractor.js";
@@ -37,9 +40,9 @@ function createPlugins(config: CalGuardConfig) {
           })
         );
         break;
-      // 其他日历源待实现
+      // 其他日历源待实现：google, feishu, dingtalk, outlook
       default:
-        console.error(`[Config] 日历源 "${cal.type}" 尚未实现`);
+        console.error(`[Config] 日历源 "${(cal as any).type}" 尚未实现`);
     }
   }
 
@@ -50,9 +53,21 @@ function createPlugins(config: CalGuardConfig) {
       case "mac_mail":
         messageSources.push(new MacMailSource(msg.db_path));
         break;
-      // 其他消息源待实现
+      case "email":
+        messageSources.push(
+          new EmailSource({
+            host: msg.imap.host,
+            port: msg.imap.port,
+            tls: msg.imap.tls,
+            user: msg.imap.user,
+            password: msg.imap.password,
+            folders: msg.imap.folders,
+          })
+        );
+        break;
+      // 其他消息源待实现：feishu_message, dingtalk_message, wechat_local, sms_local
       default:
-        console.error(`[Config] 消息源 "${msg.type}" 尚未实现`);
+        console.error(`[Config] 消息源 "${(msg as any).type}" 尚未实现`);
     }
   }
 
@@ -77,8 +92,26 @@ function createPlugins(config: CalGuardConfig) {
           new EmailNotifier(ch.smtp)
         );
         break;
+      case "dingtalk_bot":
+        notifiers.push(
+          new DingtalkNotifier({
+            webhook: ch.webhook,
+            secret: ch.secret,
+          })
+        );
+        break;
+      case "wecom":
+        notifiers.push(
+          new WecomNotifier({
+            corp_id: ch.corp_id,
+            agent_id: ch.agent_id,
+            secret: ch.secret,
+            to_user: ch.to_user,
+          })
+        );
+        break;
       default:
-        console.error(`[Config] 通知渠道 "${ch.type}" 尚未实现`);
+        console.error(`[Config] 通知渠道 "${(ch as any).type}" 尚未实现`);
     }
   }
 
