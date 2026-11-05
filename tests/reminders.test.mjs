@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { PartialFetchError } from '../dist/sources/errors.js';
 import { ReminderRunner, parseReminderOffset } from '../dist/scheduler/reminders.js';
 
 const MINUTE = 60_000;
@@ -340,3 +341,21 @@ for (const thrown of [undefined, null, 'string rejection']) {
     assert.equal(f.sent.length, 1); assert.equal(f.records().length, 1);
   });
 }
+
+test('partial calendar failures retain valid reminders and do not block another source', async (t) => {
+  const f = fixture(t); f.source.fetchEvents = async () => {
+    throw new PartialFetchError('one calendar failed', [new Error('synthetic')], [event()]);
+  };
+  f.config.calendarSources.push({ name: 'other', async fetchEvents() { return [event(at('10:30:00'), { id: 'another' })]; } });
+  f.setTime('09:30:00');
+  await assert.rejects(f.runner().check(), (error) => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 1); return true;
+  });
+  assert.equal(f.sent.length, 2); assert.equal(f.records().length, 2);
+  f.source.fetchEvents = async () => [event()]; await f.runner().check(); assert.equal(f.sent.length, 2);
+});
+
+test('a failed calendar with zero partial events is not a successful empty read', async (t) => {
+  const f = fixture(t); f.source.fetchEvents = async () => { throw new PartialFetchError('failed', [new Error('synthetic')], []); };
+  f.setTime('09:30:00'); await assert.rejects(f.runner().check(), AggregateError); assert.equal(f.sent.length, 0);
+});

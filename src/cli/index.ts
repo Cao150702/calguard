@@ -13,7 +13,7 @@ import { CalGuardScheduler } from "../scheduler/cron.js";
 import { MessageIndexer } from "../engine/indexer.js";
 import { extractKeywords } from "../engine/extractor.js";
 import { generateBrief } from "../engine/summarizer.js";
-import type { CalendarSource, MessageSource, Notifier } from "../sources/types.js";
+import type { CalendarEvent, CalendarSource, MessageSource, Notifier } from "../sources/types.js";
 import type { CalGuardConfig } from "../config/schema.js";
 
 const program = new Command()
@@ -119,6 +119,19 @@ function createPlugins(config: CalGuardConfig) {
   return { calendarSources, messageSources, notifiers };
 }
 
+/** Display valid partial results, while keeping collection failure visible to the CLI. */
+async function readCalendarEvents(
+  source: CalendarSource, from: Date, to: Date, failures: Error[]
+): Promise<CalendarEvent[]> {
+  try {
+    return await source.fetchEvents(from, to);
+  } catch (err) {
+    failures.push(new Error(`日历源 ${source.name} 读取失败`, { cause: err }));
+    console.error(`[Calendar] ${source.name} 读取失败:`, err instanceof Error ? err.message : String(err));
+    return err instanceof PartialFetchError ? err.partialResults as CalendarEvent[] : [];
+  }
+}
+
 // ── calguard start ──
 program
   .command("start")
@@ -211,24 +224,23 @@ program
     const hours = parseInt(opts.hours, 10);
     const now = new Date();
     const to = new Date(now.getTime() + hours * 3600000);
+    const failures: Error[] = [];
 
     for (const source of calendarSources) {
       console.error(`\n[${source.name}] 未来 ${hours} 小时日程:`);
-      try {
-        const events = await source.fetchEvents(now, to);
-        if (events.length === 0) {
-          console.error("  (无日程)");
-          continue;
-        }
-        for (const e of events) {
-          console.error(`  📅 ${e.start.toLocaleString()} - ${e.title}`);
-          if (e.location) console.error(`     📍 ${e.location}`);
-          if (e.attendees.length > 0) console.error(`     👥 ${e.attendees.join(", ")}`);
-        }
-      } catch (err) {
-        console.error(`  ❌ 读取失败: ${(err as Error).message}`);
+      const previousFailures = failures.length;
+      const events = await readCalendarEvents(source, now, to, failures);
+      if (events.length === 0) {
+        console.error(failures.length === previousFailures ? "  (无日程)" : "  (读取失败，无可用日程)");
+        continue;
+      }
+      for (const e of events) {
+        console.error(`  📅 ${e.start.toLocaleString()} - ${e.title}`);
+        if (e.location) console.error(`     📍 ${e.location}`);
+        if (e.attendees.length > 0) console.error(`     👥 ${e.attendees.join(", ")}`);
       }
     }
+    if (failures.length > 0) throw new AggregateError(failures, `日历读取结束，共 ${failures.length} 项失败`);
   });
 
 // ── calguard preview ──
@@ -253,9 +265,10 @@ program
     // 拉取即将到来的日程
     const now = new Date();
     const lookahead = new Date(now.getTime() + 25 * 3600000);
+    const failures: Error[] = [];
 
     for (const source of calendarSources) {
-      const events = await source.fetchEvents(now, lookahead);
+      const events = await readCalendarEvents(source, now, lookahead, failures);
       for (const event of events) {
         console.error(`\n── 日程简报预览: ${event.title} ──`);
         console.error(`时间: ${event.start.toLocaleString()}`);
@@ -280,6 +293,7 @@ program
         }
       }
     }
+    if (failures.length > 0) throw new AggregateError(failures, `日历预览结束，共 ${failures.length} 项失败`);
   });
 
 // ── calguard status ──

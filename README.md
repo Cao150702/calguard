@@ -126,7 +126,9 @@ IMAP 读取会等待当前批次的邮件解析完成；读取、解析、提前
 
 扩展消息源可在不完整读取时抛出 `PartialFetchError<Message>`，提供错误列表与有效的 `partialResults`；完整成功（含真正无消息）仍返回 `Message[]`。
 
-注意：退出码只能反映已向调度器抛出的错误。Apple Calendar 和 Mac Mail 的部分旧读取/解析错误仍会在适配器内部被记录后吞掉，尚不能由调度器识别；本次 IMAP 修复不代表所有数据源的健康检查已完成。
+Apple Calendar 命令使用 JXA 输出结构化 JSON，日期直接输出带时区的 UTC ISO 时间戳，不再把中文等本地化日期交给 `new Date(文本)` 猜测。命令、JSON、必需字段或无效日期错误会报告为失败；有效的部分日程仍参与原有提醒逻辑。日程列表与预览命令也会展示有效部分结果，同时以非零状态退出。真正没有日程仍是成功的空结果。现有事件 ID 规则保持不变。
+
+Apple 命令脚本只通过假 Application 对象及合成日期测试，包含中文文本、上海时区以及夏令时重复小时。中文环境验证使用 `LC_ALL=zh_CN.UTF-8 LANG=zh_CN.UTF-8 TZ=Asia/Shanghai node --loader ./tests/apple-calendar-loader.mjs --test tests/apple-calendar.test.mjs`，属于 Node/VM 仿真；未验证原生 macOS JXA 自动化桥接或真实日历权限。Mac Mail 的部分旧读取/解析错误仍会被适配器内部吞掉，不能由调度器识别。修复不代表所有数据源的健康检查已完成。
 
 测试仅使用假日历、假时钟、临时状态目录以及拦截的假 HTTP 响应，不读取真实日历、邮件或凭证，不发送真实通知，也不启动守护进程。
 

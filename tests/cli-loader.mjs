@@ -8,7 +8,7 @@ export class Command {
   command(name) { const command = new Command(name); this.commands.push(command); return command; }
   action(callback) { this.callback = callback; return this; }
   parse() { throw new Error('Async CLI actions must use parseAsync'); }
-  async parseAsync() { await this.commands.find(c => c.commandName === process.argv[2]).callback({ once: true, config: 'fake-config', source: 'all' }); }
+  async parseAsync() { await this.commands.find(c => c.commandName === process.argv[2]).callback({ once: true, config: 'fake-config', source: 'all', hours: '24', mode: 'standard' }); }
 }`;
 const fakeConfig = `
 export function ensureDataDir() {}
@@ -31,7 +31,9 @@ export class AppleCalendarSource {
     if (scenario === 'calendar-failure') throw new Error('synthetic calendar failure');
     if (scenario === 'empty') return [];
     const start = new Date(process.env.CALGUARD_TEST_EVENT_START);
-    return [{ id: 'synthetic', title: 'Synthetic event', start, end: new Date(start.getTime() + 3600000), attendees: [], source: 'fake' }];
+    const events = [{ id: 'synthetic', title: 'Synthetic event', start, end: new Date(start.getTime() + 3600000), attendees: [], source: 'fake' }];
+    if (scenario === 'partial-calendar') throw new PartialFetchError('synthetic partial calendar', [new Error('synthetic bad calendar')], events);
+    return events;
   }
 }
 export class MacMailSource {
@@ -65,7 +67,7 @@ export async function resolve(specifier, context, nextResolve) {
     if (specifier.startsWith('../sources/calendar/') || specifier.startsWith('../sources/messages/') || specifier.startsWith('../notifiers/')) return mocked(fakePlugins);
     if (specifier === '../engine/indexer.js') return mocked(`
       import { appendFileSync } from 'node:fs'; import { join } from 'node:path';
-      export class MessageIndexer { upsert(messages) { appendFileSync(join(process.env.CALGUARD_TEST_DIR, 'indexed'), JSON.stringify(messages.map(m => m.id)) + '\\n'); } }
+      export class MessageIndexer { search() { return []; } upsert(messages) { appendFileSync(join(process.env.CALGUARD_TEST_DIR, 'indexed'), JSON.stringify(messages.map(m => m.id)) + '\\n'); } }
     `);
   }
   if (context.parentURL?.endsWith('/dist/scheduler/cron.js') && specifier === 'node:os') {

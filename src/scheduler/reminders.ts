@@ -1,6 +1,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { PartialFetchError } from "../sources/errors.js";
 import type { CalendarEvent, CalendarSource, Notifier, NotifyParams } from "../sources/types.js";
 
 const MINUTE = 60_000;
@@ -117,7 +118,8 @@ export class ReminderRunner {
       } catch (err) {
         failures.push(new Error(`日历源 ${source.name} 检查失败`, { cause: err }));
         console.error(`[Scheduler] ${source.name} 检查失败:`, err instanceof Error ? err.message : String(err));
-        continue;
+        if (!(err instanceof PartialFetchError)) continue;
+        events = err.partialResults as CalendarEvent[];
       }
       for (const event of events) {
         const start = event.start.getTime();

@@ -35,7 +35,7 @@ export interface CorrelatedItem {
 export interface CalendarSource {
   readonly name: string;
 
-  /** 拉取指定时间范围内的日程事件 */
+  /** 拉取日程；不完整读取应抛出带有效事件的 PartialFetchError，真正无事件则返回空数组。 */
   fetchEvents(from: Date, to: Date): Promise<CalendarEvent[]>;
 }
 

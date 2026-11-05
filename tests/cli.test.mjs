@@ -65,3 +65,39 @@ test('one-shot partial collection continues the existing delivery policy while r
   assert.equal(JSON.parse(readFileSync(join(dir, '.calguard', 'state.json'), 'utf8')).length, 2);
   assert.match(result.stderr, /已保留 1 条部分结果/); assert.match(result.stderr, /执行失败/);
 });
+
+for (const command of ['events', 'preview', 'start']) {
+  test(`CLI ${command} retains valid partial calendar output and reports failure`, (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'calguard-cli-calendar-test-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const result = spawnSync(process.execPath, ['--loader', './tests/cli-loader.mjs', 'dist/cli/index.js', command, '--once'], {
+      cwd: root, encoding: 'utf8', timeout: 10000,
+      env: { ...process.env, CALGUARD_TEST_DIR: dir, CALGUARD_TEST_SCENARIO: 'partial-calendar',
+        CALGUARD_TEST_EVENT_START: new Date(Date.now() + 30 * 60000).toISOString() },
+    });
+    assert.equal(result.error, undefined); assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /执行失败/); assert.doesNotMatch(result.stderr, /\(无日程\)/);
+    if (command === 'start') {
+      assert.equal(JSON.parse(readFileSync(join(dir, '.calguard', 'state.json'), 'utf8')).length, 2);
+    } else {
+      assert.match(result.stderr, /Synthetic event/);
+      assert.equal(existsSync(join(dir, '.calguard', 'state.json')), false);
+    }
+  });
+}
+
+for (const [scenario, expectedCode, expectedText] of [
+  ['empty', 0, /\(无日程\)/], ['calendar-failure', 1, /读取失败，无可用日程/],
+]) {
+  test(`CLI event listing distinguishes ${scenario} from other empty output`, (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'calguard-cli-empty-test-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const result = spawnSync(process.execPath, ['--loader', './tests/cli-loader.mjs', 'dist/cli/index.js', 'events'], {
+      cwd: root, encoding: 'utf8', timeout: 10000,
+      env: { ...process.env, CALGUARD_TEST_DIR: dir, CALGUARD_TEST_SCENARIO: scenario },
+    });
+    assert.equal(result.error, undefined); assert.equal(result.status, expectedCode, result.stderr);
+    assert.match(result.stderr, expectedText);
+    assert.equal(existsSync(join(dir, '.calguard', 'state.json')), false);
+  });
+}

@@ -1,13 +1,8 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import type { CalendarEvent, CalendarSource } from "../types.js";
+import { PartialFetchError } from "../errors.js";
 
-/**
- * Apple Calendar 数据源
- * 通过 AppleScript 读取 macOS 日历事件
- *
- * 注意：不使用 whose 子句（会导致超时），而是获取全部事件后在 JS 中过滤
- * AppleScript 中文日期格式：2026年5月11日 星期一 13:40:00
- */
+/** Apple Calendar reads use JXA JSON and ISO timestamps, never locale-formatted dates. */
 export class AppleCalendarSource implements CalendarSource {
   readonly name = "apple";
   private skipCalendars: Set<string>;
@@ -20,130 +15,122 @@ export class AppleCalendarSource implements CalendarSource {
 
   async fetchEvents(from: Date, to: Date): Promise<CalendarEvent[]> {
     const events: CalendarEvent[] = [];
-
+    const failures: unknown[] = [];
+    if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from > to) {
+      throw new PartialFetchError<CalendarEvent>("日历查询时间范围无效", [new Error("无效时间范围")], []);
+    }
+    let calendarNames: string[];
     try {
-      // 获取所有日历名称
-      const calendarsScript = `
-        tell application "Calendar"
-          set calList to name of every calendar
-          set output to ""
-          repeat with c in calList
-            set output to output & c & "|"
-          end repeat
-          return output
-        end tell
-      `;
-      const calOutput = execSync(`osascript -e '${calendarsScript}'`, {
-        timeout: 15000,
-        encoding: "utf-8",
-      }).trim();
-      const calendarNames = calOutput.split("|").filter(Boolean);
-
-      console.error(`[AppleCalendar] 找到 ${calendarNames.length} 个日历`);
-
-      // 逐个日历获取事件
-      for (const calName of calendarNames) {
-        if (this.skipCalendars.has(calName)) {
-          console.error(`[AppleCalendar] 跳过: "${calName}"`);
-          continue;
-        }
-        try {
-          const calEvents = await this.fetchCalendarEvents(calName, from, to);
-          events.push(...calEvents);
-          if (calEvents.length > 0) {
-            console.error(`[AppleCalendar] "${calName}": ${calEvents.length} 个事件`);
-          }
-        } catch (err) {
-          console.error(`[AppleCalendar] "${calName}" 读取超时或失败，已跳过`);
-        }
+      const script = `JSON.stringify(Application("Calendar").calendars().map(function(calendar) { return calendar.name(); }))`;
+      const output = execFileSync("osascript", ["-l", "JavaScript", "-e", script], {
+        timeout: 15000, encoding: "utf-8",
+      });
+      const names: unknown = JSON.parse(output);
+      if (!Array.isArray(names) || !names.every((name) => typeof name === "string" && name.length > 0)) {
+        throw new Error("日历名称列表格式无效");
       }
+      calendarNames = names;
     } catch (err) {
-      console.error("[AppleCalendar] 无法访问 Calendar 应用:", (err as Error).message);
+      throw new PartialFetchError<CalendarEvent>("无法读取 Apple Calendar 日历列表", [err], []);
     }
 
+    for (const calName of calendarNames) {
+      if (this.skipCalendars.has(calName)) continue;
+      try {
+        events.push(...this.fetchCalendarEvents(calName, from, to));
+      } catch (err) {
+        if (err instanceof PartialFetchError) {
+          events.push(...err.partialResults as CalendarEvent[]);
+          failures.push(...err.errors);
+        } else {
+          failures.push(new Error(`日历 ${calName} 读取失败`, { cause: err }));
+        }
+      }
+    }
+    if (failures.length) throw new PartialFetchError("Apple Calendar 读取未全部完成", failures, events);
     return events;
   }
 
-  private async fetchCalendarEvents(
-    calName: string,
-    from: Date,
-    to: Date
-  ): Promise<CalendarEvent[]> {
-    const events: CalendarEvent[] = [];
-
-    const escapedName = calName.replace(/"/g, '\\"');
-    const script = `
-      tell application "Calendar"
-        set cal to calendar "${escapedName}"
-        set eventList to every event of cal
-        set output to ""
-        repeat with e in eventList
-          set eTitle to summary of e
-          set eStart to start date of e
-          set eEnd to end date of e
-          set eLoc to ""
-          try
-            set eLoc to location of e
-          end try
-          set eDesc to ""
-          try
-            set eDesc to description of e
-          end try
-          set eAttendees to ""
-          try
-            set aList to every attendee of e
-            repeat with a in aList
-              set eAttendees to eAttendees & email of a & "|"
-            end repeat
-          end try
-          set output to output & eTitle & "\\t" & eStart & "\\t" & eEnd & "\\t" & (eLoc as text) & "\\t" & (eDesc as text) & "\\t" & eAttendees & "\\n"
-        end repeat
-        return output
-      end tell
-    `;
-
-    const output = execSync(`osascript -e '${script}'`, {
-      timeout: this.timeoutMs,
-      encoding: "utf-8",
-      maxBuffer: 10 * 1024 * 1024,
-    });
-
-    for (const line of output.split("\n").filter(Boolean)) {
-      const parts = line.split("\t");
-      if (parts.length < 4) continue;
-
-      const title = parts[0] || "(无标题)";
-      let startDate: Date;
-      let endDate: Date;
-      try {
-        startDate = new Date(parts[1]);
-        endDate = new Date(parts[2]);
-      } catch {
-        continue; // 日期解析失败
+  private fetchCalendarEvents(calName: string, from: Date, to: Date): CalendarEvent[] {
+    // No shell interpolation. JSON quoting preserves names containing quotes/newlines.
+    const script = `(function() {
+      var calendar = Application("Calendar").calendars.byName(${JSON.stringify(calName)});
+      var events = [], errors = [];
+      function optionalText(value) {
+        if (value === null || value === undefined) return "";
+        if (typeof value !== "string") throw new Error("Invalid text property");
+        return value;
       }
-      const location = parts[3] && parts[3] !== "missing value" ? parts[3] : undefined;
-      const description = parts[4] && parts[4] !== "missing value" ? parts[4] : undefined;
-      const attendees = (parts[5] || "")
-        .split("|")
-        .filter(Boolean)
-        .map((a) => a.trim());
-
-      // 时间范围过滤
-      if (endDate >= from && startDate <= to) {
-        events.push({
-          id: `apple-${calName}-${startDate.getTime()}`,
-          title,
-          start: startDate,
-          end: endDate,
-          attendees,
-          location,
-          description,
-          source: "apple",
-          calendar: calName,
-        });
+      calendar.events().forEach(function(event, index) {
+        try {
+          var title = optionalText(event.summary());
+          var start = event.startDate().toISOString();
+          var end = event.endDate().toISOString();
+          function readOptional(label, getter, fallback) {
+            try { return getter(); }
+            catch (err) { errors.push("Event " + index + " " + label + ": " + String(err)); return fallback; }
+          }
+          var location = readOptional("location", function() { return optionalText(event.location()); }, "");
+          var description = readOptional("description", function() { return optionalText(event.description()); }, "");
+          var attendeeList = readOptional("attendees", function() { return event.attendees(); }, []);
+          var attendees = readOptional("attendees", function() {
+            return attendeeList.map(function(attendee, attendeeIndex) {
+              return readOptional("attendee " + attendeeIndex, function() { return optionalText(attendee.email()); }, "");
+            }).filter(function(email) { return email.length > 0; });
+          }, []);
+          events.push({ title: title, start: start, end: end, location: location, description: description, attendees: attendees });
+        } catch (err) {
+          errors.push("Event " + index + ": " + String(err));
+        }
+      });
+      return JSON.stringify({ events: events, errors: errors });
+    })()`;
+    const output = execFileSync("osascript", ["-l", "JavaScript", "-e", script], {
+      timeout: this.timeoutMs, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024,
+    });
+    const payload: unknown = JSON.parse(output);
+    if (!payload || typeof payload !== "object" || !Array.isArray((payload as { events?: unknown }).events)
+        || !Array.isArray((payload as { errors?: unknown }).errors)) {
+      throw new Error(`日历 ${calName} 返回格式无效`);
+    }
+    const data = payload as { events: unknown[]; errors: unknown[] };
+    const failures: unknown[] = data.errors.map((error) => new Error(`日历 ${calName} 事件读取失败: ${typeof error === "string" ? error : "无效错误记录"}`));
+    const events: CalendarEvent[] = [];
+    for (const [index, row] of data.events.entries()) {
+      try {
+        if (!row || typeof row !== "object") throw new Error("事件格式无效");
+        const e = row as Record<string, unknown>;
+        if (typeof e.title !== "string" || !Array.isArray(e.attendees) || !e.attendees.every((a) => typeof a === "string")
+            || (e.location !== undefined && typeof e.location !== "string")
+            || (e.description !== undefined && typeof e.description !== "string")) throw new Error("事件字段无效");
+        const start = this.parseTimestamp(e.start);
+        const end = this.parseTimestamp(e.end);
+        if (end < start) throw new Error("事件结束时间早于开始时间");
+        if (end >= from && start <= to) {
+          events.push({
+            id: `apple-${calName}-${start.getTime()}`,
+            title: e.title || "(无标题)", start, end,
+            attendees: e.attendees.map((a: string) => a.trim()).filter(Boolean),
+            location: (e.location as string | undefined) || undefined,
+            description: (e.description as string | undefined) || undefined,
+            source: "apple", calendar: calName,
+          });
+        }
+      } catch (err) {
+        failures.push(new Error(`日历 ${calName} 第 ${index + 1} 个事件无效`, { cause: err }));
       }
     }
-
+    if (failures.length) throw new PartialFetchError(`日历 ${calName} 未全部读取成功`, failures, events);
     return events;
+  }
+
+  private parseTimestamp(value: unknown): Date {
+    // JXA emits canonical UTC. Round-trip validation rejects normalized impossible dates.
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+      throw new Error("事件时间必须是 UTC ISO 时间戳");
+    }
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime()) || date.toISOString() !== value) throw new Error("事件日期无效");
+    return date;
   }
 }
