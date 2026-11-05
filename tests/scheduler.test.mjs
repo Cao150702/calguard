@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { PartialFetchError } from '../dist/sources/errors.js';
+import { MacMailSource } from '../dist/sources/messages/mac_mail.js';
 import { CalGuardScheduler } from '../dist/scheduler/cron.js';
 
 function fixture(t) {
@@ -131,4 +132,57 @@ test('partial indexing errors are reported separately and do not suppress other 
     assert.match(error.errors[1].message, /部分结果索引失败/); return true;
   });
   assert.equal(nextSource, true); assert.equal(f.sent.length, 1);
+});
+
+function fakeMacMail(t, output, exists = true) {
+  globalThis.__calguardFakeMacMailExists = () => exists;
+  globalThis.__calguardFakeMacMailCommand = () => output;
+  t.after(() => {
+    delete globalThis.__calguardFakeMacMailExists;
+    delete globalThis.__calguardFakeMacMailCommand;
+  });
+  return new MacMailSource('/synthetic/mail/Envelope Index');
+}
+
+function macMailRow(id, overrides = {}) {
+  return { ROWID: id, msg_id: `synthetic-${id}`, subject: 'Synthetic meeting',
+    sender_addr: 'synthetic@example.test', summary: `Synthetic context ${id}`,
+    date_received: Date.parse('2026-11-05T09:00:00Z') / 1000 - 978307200, ...overrides };
+}
+
+test('actual Mac Mail adapter retains valid partial rows for reminders while one-shot still fails', async (t) => {
+  const f = fixture(t);
+  f.messages.push(fakeMacMail(t, JSON.stringify([macMailRow(1), macMailRow(2, { date_received: 'invalid' }), macMailRow(3)])));
+  f.config.engine.skip_summary_if_no_match = true; f.setTime('09:30:00');
+  await assert.rejects(f.scheduler().runOnce(), (error) => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 1);
+    assert.ok(error.errors[0].cause instanceof PartialFetchError); return true;
+  });
+  assert.deepEqual(globalThis.__calguardIndexedMessages.map((m) => m.id), ['macmail-1', 'macmail-3']);
+  assert.equal(f.sent.length, 1);
+  assert.deepEqual(f.sent[0].messages.map((m) => m.id), ['macmail-1', 'macmail-3']);
+});
+
+test('all invalid Mac Mail rows never enter the index and do not change existing reminder policy', async (t) => {
+  const f = fixture(t);
+  f.messages.push(fakeMacMail(t, JSON.stringify([null, macMailRow(1, { summary: {} })])));
+  f.setTime('09:30:00');
+  await assert.rejects(f.scheduler().runOnce(), (error) => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 1);
+    assert.deepEqual(error.errors[0].cause.partialResults, []); return true;
+  });
+  assert.deepEqual(globalThis.__calguardIndexedMessages, []);
+  assert.equal(f.sent.length, 1); assert.deepEqual(f.sent[0].messages, []);
+});
+
+test('missing Mac Mail database is a visible failure without blocking independent message sources', async (t) => {
+  const f = fixture(t); let continued = false;
+  f.messages.push(fakeMacMail(t, '[]', false),
+    { name: 'other-mail', async fetchMessages() { continued = true; return []; } });
+  f.setTime('09:30:00');
+  await assert.rejects(f.scheduler().runOnce(), (error) => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 1); return true;
+  });
+  assert.equal(continued, true); assert.deepEqual(globalThis.__calguardIndexedMessages, []);
+  assert.equal(f.sent.length, 1);
 });

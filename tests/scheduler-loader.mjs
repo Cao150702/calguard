@@ -1,5 +1,6 @@
 import { resolve as appleCalendarResolve } from './apple-calendar-loader.mjs';
 import { resolve as emailSourceResolve } from './email-source-loader.mjs';
+import { resolve as macMailResolve } from './mac-mail-loader.mjs';
 
 // Mock only the scheduler's timer registration and message index. Tests must never
 // create a daemon, read the user's index, or load config/credentials from home.
@@ -24,5 +25,6 @@ export async function resolve(specifier, context, nextResolve) {
       return { url: `data:text/javascript,${encodeURIComponent(mocks[specifier])}`, shortCircuit: true };
     }
   }
-  return appleCalendarResolve(specifier, context, (specifier, context) => emailSourceResolve(specifier, context, nextResolve));
+  return appleCalendarResolve(specifier, context, (specifier, context) =>
+    emailSourceResolve(specifier, context, (specifier, context) => macMailResolve(specifier, context, nextResolve)));
 }

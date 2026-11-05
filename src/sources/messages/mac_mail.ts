@@ -1,6 +1,8 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Message, MessageSource } from "../types.js";
+import { PartialFetchError } from "../errors.js";
 
 /**
  * Mac Mail 本地 SQLite 数据源
@@ -17,7 +19,8 @@ export class MacMailSource implements MessageSource {
   private dbPath: string;
 
   constructor(dbPath?: string) {
-    this.dbPath = dbPath || this.getDefaultDbPath();
+    // Absolute paths cannot be mistaken for sqlite3 options (for example -cmd).
+    this.dbPath = resolve(dbPath || this.getDefaultDbPath());
   }
 
   private getDefaultDbPath(): string {
@@ -28,12 +31,13 @@ export class MacMailSource implements MessageSource {
   async fetchMessages(since: Date): Promise<Message[]> {
     const messages: Message[] = [];
 
-    if (!existsSync(this.dbPath)) {
-      console.error(`[MacMail] 数据库文件不存在: ${this.dbPath}`);
-      return messages;
+    const errors: unknown[] = [];
+    if (!Number.isFinite(since.getTime())) {
+      throw new PartialFetchError<Message>("Mac Mail 读取失败", [new Error("无效的增量起始时间")], []);
     }
 
-    // Apple Mail 的 date_received 是 Core Data timestamp (2001-01-01 基准，秒级)
+    // Preserve the existing Core Data epoch assumption (2001-01-01, seconds).
+    // Apple Mail schema/epoch compatibility still requires native macOS validation.
     const sinceAppleEpoch = Math.floor(since.getTime() / 1000) - 978307200;
 
     const sql = `
@@ -55,46 +59,57 @@ export class MacMailSource implements MessageSource {
     `;
 
     try {
+      if (!existsSync(this.dbPath)) {
+        throw new Error("Mac Mail 数据库文件不存在");
+      }
       const query = sql.replace(/\n/g, " ").trim();
-      const output = execSync(
-        `sqlite3 -json '${this.dbPath}' "${query}"`,
-        {
-          timeout: 30000,
-          encoding: "utf-8",
-          maxBuffer: 50 * 1024 * 1024,
-        }
-      );
+      const output = execFileSync("sqlite3", ["-readonly", "-json", this.dbPath, query], {
+        timeout: 30000,
+        encoding: "utf-8",
+        maxBuffer: 50 * 1024 * 1024,
+      });
 
+      // sqlite3 emits no JSON at all when a SELECT has no rows.
       if (!output.trim()) return messages;
+      const rows: unknown = JSON.parse(output);
+      if (!Array.isArray(rows)) throw new Error("Mac Mail 查询结果不是数组");
 
-      const rows = JSON.parse(output) as Array<{
-        ROWID: number;
-        msg_id: string;
-        subject: string;
-        date_received: number;
-        sender_addr: string;
-        summary: string;
-      }>;
+      for (const [index, row] of rows.entries()) {
+        try {
+          if (row === null || typeof row !== "object" || Array.isArray(row)) {
+            throw new Error("记录不是对象");
+          }
+          // Validate every field used by the index before constructing a message.
+          // msg_id is deliberately unused: stable IDs remain based on ROWID.
+          if (!Number.isSafeInteger(row.ROWID) ||
+              typeof row.sender_addr !== "string" || typeof row.subject !== "string" ||
+              typeof row.summary !== "string" || typeof row.date_received !== "number" ||
+              !Number.isFinite(row.date_received)) {
+            throw new Error("记录字段类型无效");
+          }
+          const timestamp = new Date((row.date_received + 978307200) * 1000);
+          if (!Number.isFinite(timestamp.getTime())) throw new Error("记录时间无效");
 
-      for (const row of rows) {
-        // Apple epoch -> Unix timestamp
-        const unixTimestamp = row.date_received + 978307200;
-        const timestamp = new Date(unixTimestamp * 1000);
-
-        messages.push({
-          id: `macmail-${row.ROWID}`,
-          from: row.sender_addr,
-          to: [],
-          subject: row.subject,
-          body: row.summary,
-          timestamp,
-          source: "mac_mail",
-        });
+          messages.push({
+            id: `macmail-${row.ROWID}`,
+            from: row.sender_addr,
+            to: [],
+            subject: row.subject,
+            body: row.summary,
+            timestamp,
+            source: "mac_mail",
+          });
+        } catch (err) {
+          errors.push(new Error(`Mac Mail 第 ${index + 1} 条记录无效`, { cause: err }));
+        }
       }
     } catch (err) {
-      console.error(`[MacMail] SQLite 查询失败:`, (err as Error).message);
+      errors.push(err);
     }
 
+    if (errors.length > 0) {
+      throw new PartialFetchError<Message>("Mac Mail 读取不完整", errors, messages);
+    }
     return messages;
   }
 }

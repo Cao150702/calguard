@@ -126,9 +126,11 @@ IMAP 读取会等待当前批次的邮件解析完成；读取、解析、提前
 
 扩展消息源可在不完整读取时抛出 `PartialFetchError<Message>`，提供错误列表与有效的 `partialResults`；完整成功（含真正无消息）仍返回 `Message[]`。
 
+Mac Mail 以独立参数、只读方式调用 SQLite。数据库不存在、命令失败、JSON 格式或消息行字段无效均会报告失败，不再冒充没有邮件；正常空输出或空数组仍是成功。有效行会保留，坏行不会进入索引。查询范围、500 条上限、消息 ID 和现有提醒策略保持不变。
+
 Apple Calendar 命令使用 JXA 输出结构化 JSON，日期直接输出带时区的 UTC ISO 时间戳，不再把中文等本地化日期交给 `new Date(文本)` 猜测。命令、JSON、必需字段或无效日期错误会报告为失败；有效的部分日程仍参与原有提醒逻辑。日程列表与预览命令也会展示有效部分结果，同时以非零状态退出。真正没有日程仍是成功的空结果。现有事件 ID 规则保持不变。
 
-Apple 命令脚本只通过假 Application 对象及合成日期测试，包含中文文本、上海时区以及夏令时重复小时。中文环境验证使用 `LC_ALL=zh_CN.UTF-8 LANG=zh_CN.UTF-8 TZ=Asia/Shanghai node --loader ./tests/apple-calendar-loader.mjs --test tests/apple-calendar.test.mjs`，属于 Node/VM 仿真；未验证原生 macOS JXA 自动化桥接或真实日历权限。Mac Mail 的部分旧读取/解析错误仍会被适配器内部吞掉，不能由调度器识别。修复不代表所有数据源的健康检查已完成。
+Apple 命令脚本只通过假 Application 对象及合成日期测试，包含中文文本、上海时区以及夏令时重复小时。中文环境验证使用 `LC_ALL=zh_CN.UTF-8 LANG=zh_CN.UTF-8 TZ=Asia/Shanghai node --loader ./tests/apple-calendar-loader.mjs --test tests/apple-calendar.test.mjs`，属于 Node/VM 仿真；未验证原生 macOS JXA 自动化桥接或真实日历权限。Mac Mail 使用假文件探测、假 SQLite 命令及合成行测试，未验证原生 macOS 的 SQLite 版本、Mail 数据库结构或权限。现有日期转换仍按 2001-01-01 起算的秒数处理；该假设尚未在真实 Mail 数据库核实。修复不代表所有数据源的健康检查已完成。
 
 测试仅使用假日历、假时钟、临时状态目录以及拦截的假 HTTP 响应，不读取真实日历、邮件或凭证，不发送真实通知，也不启动守护进程。
 
