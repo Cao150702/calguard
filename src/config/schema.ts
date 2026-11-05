@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseReminderOffset } from "../scheduler/reminders.js";
 
 // ── 日历数据源 ──
 const AppleCalendarConfigSchema = z.object({
@@ -179,7 +180,10 @@ export const CalGuardConfigSchema = z.object({
     correlation_threshold: z.number().min(0).max(1).default(0.3),
   }),
   notifications: z.object({
-    remind_at: z.array(z.string()).default(["24h", "1h"]),
+    remind_at: z.array(z.string().refine(
+      (value: string) => parseReminderOffset(value) !== undefined,
+      "提醒时间必须是正整数分钟或小时（如 15m、1h、24h），最多 365 天"
+    )).default(["24h", "1h"]),
     channels: z.array(NotifierConfigSchema).default([]),
   }),
   llm: LlmConfigSchema.default({}),

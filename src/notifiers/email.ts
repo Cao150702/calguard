@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import nodemailer from "nodemailer";
 import type { Notifier, NotifyParams } from "../sources/types.js";
 
@@ -7,6 +8,7 @@ import type { Notifier, NotifyParams } from "../sources/types.js";
  */
 export class EmailNotifier implements Notifier {
   readonly name = "email";
+  readonly deliveryId: string;
   private smtpConfig: {
     host: string;
     port: number;
@@ -25,6 +27,7 @@ export class EmailNotifier implements Notifier {
     to: string;
     subject_prefix?: string;
   }) {
+    this.deliveryId = `email:${createHash("sha256").update(JSON.stringify([smtpConfig.host, smtpConfig.user, smtpConfig.to])).digest("hex")}`;
     this.smtpConfig = {
       ...smtpConfig,
       subject_prefix: smtpConfig.subject_prefix || "[CalGuard]",

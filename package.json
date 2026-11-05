@@ -16,7 +16,8 @@
     "events": "node dist/cli/index.ts events",
     "preview": "node dist/cli/index.ts preview",
     "status": "node dist/cli/index.ts status",
-    "config:validate": "node dist/cli/index.ts config validate"
+    "config:validate": "node dist/cli/index.ts config validate",
+    "test": "npm run build && node --loader ./tests/scheduler-loader.mjs --test tests/*.test.mjs"
   },
   "dependencies": {
     "commander": "^13.1.0",

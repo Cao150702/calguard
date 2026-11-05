@@ -50,8 +50,10 @@ export interface MessageSource {
 /** 通知渠道接口 */
 export interface Notifier {
   readonly name: string;
+  /** Stable destination identity for restart-safe per-channel deduplication. */
+  readonly deliveryId?: string;
 
-  /** 发送日程简报通知 */
+  /** 发送日程简报通知；失败必须 reject，只有渠道确认接受后才能 resolve。 */
   send(params: NotifyParams): Promise<void>;
 }
 

@@ -7,12 +7,14 @@ import type { Notifier, NotifyParams } from "../sources/types.js";
  */
 export class FeishuNotifier implements Notifier {
   readonly name = "feishu_bot";
+  readonly deliveryId: string;
   private webhook: string;
   private secret?: string;
   private template: "full" | "checklist";
 
   constructor(opts: { webhook: string; secret?: string; template?: "full" | "checklist" }) {
     this.webhook = opts.webhook;
+    this.deliveryId = crypto.createHash("sha256").update(opts.webhook).digest("hex");
     this.secret = opts.secret;
     this.template = opts.template || "full";
   }
@@ -58,7 +60,13 @@ export class FeishuNotifier implements Notifier {
     });
 
     if (!response.ok) {
-      console.error(`[Feishu] 发送失败: ${response.status}`);
+      throw new Error(`[Feishu] 发送失败: HTTP ${response.status}`);
+    }
+    const result = await response.json();
+    // Support current and legacy webhook response formats; require explicit success.
+    const status = result?.code ?? result?.StatusCode;
+    if (status !== 0 || (result?.StatusCode !== undefined && result.StatusCode !== 0)) {
+      throw new Error(`[Feishu] API 错误: ${status ?? "缺少状态码"}`);
     }
   }
 

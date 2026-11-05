@@ -1,3 +1,4 @@
+import type { Writable } from "node:stream";
 import type { Notifier, NotifyParams } from "../sources/types.js";
 
 /**
@@ -8,16 +9,39 @@ import type { Notifier, NotifyParams } from "../sources/types.js";
  */
 export class WorkbuddyNotifier implements Notifier {
   readonly name = "workbuddy";
+  readonly deliveryId = "workbuddy:stdout";
   private template: "full" | "checklist";
+  private output: Writable;
 
-  constructor(template: "full" | "checklist" = "full") {
+  constructor(template: "full" | "checklist" = "full", output: Writable = process.stdout) {
     this.template = template;
+    this.output = output;
   }
 
   async send(params: NotifyParams): Promise<void> {
     const content = this.format(params);
     // 输出到 stdout（WorkBuddy 捕获推送到微信）
-    process.stdout.write(content + "\n");
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => { cleanup(); reject(error); };
+      const cleanup = () => { this.output.off("error", onError); };
+      this.output.once("error", onError);
+      try {
+        this.output.write(content + "\n", (error) => {
+          if (error) {
+            // Writable emits its error after the write callback; keep the listener
+            // through that turn so a failed pipe does not become unhandled.
+            setImmediate(cleanup);
+            reject(error);
+          } else {
+            cleanup();
+            resolve();
+          }
+        });
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
   }
 
   private format(params: NotifyParams): string {

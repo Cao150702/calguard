@@ -141,10 +141,21 @@ program
     } else {
       // 守护进程模式
       scheduler.start();
-      process.on("SIGINT", () => {
-        console.error("\n[CalGuard] 已停止");
-        process.exit(0);
-      });
+      let shuttingDown = false;
+      const shutdown = () => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        console.error("\n[CalGuard] 正在等待当前提醒保存后停止...");
+        scheduler.stop().then(() => {
+          console.error("[CalGuard] 已停止");
+          process.exit(0);
+        }).catch((err) => {
+          console.error("[CalGuard] 停止失败，请检查提醒状态:", err);
+          process.exit(1);
+        });
+      };
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
     }
   });
 

@@ -7,6 +7,7 @@ import type { Notifier, NotifyParams } from "../sources/types.js";
  */
 export class WecomNotifier implements Notifier {
   readonly name = "wecom";
+  readonly deliveryId: string;
   private corpId: string;
   private agentId: string;
   private secret: string;
@@ -24,13 +25,14 @@ export class WecomNotifier implements Notifier {
     this.agentId = opts.agent_id;
     this.secret = opts.secret;
     this.toUser = opts.to_user || "@all";
+    this.deliveryId = crypto.createHash("sha256")
+      .update(JSON.stringify([this.corpId, this.agentId, this.toUser])).digest("hex");
   }
 
   async send(params: NotifyParams): Promise<void> {
     const token = await this.getAccessToken();
     if (!token) {
-      console.error("[WeCom] 获取 access_token 失败");
-      return;
+      throw new Error("[WeCom] 获取 access_token 失败");
     }
 
     const markdown = this.formatMarkdown(params);
@@ -51,9 +53,17 @@ export class WecomNotifier implements Notifier {
       body: JSON.stringify(body),
     });
 
-    const result = (await response.json()) as { errcode: number; errmsg: string };
-    if (result.errcode !== 0) {
-      console.error(`[WeCom] 发送失败: ${result.errcode} ${result.errmsg}`);
+    if (!response.ok) {
+      throw new Error(`[WeCom] 发送失败: HTTP ${response.status}`);
+    }
+    const result = (await response.json()) as { errcode?: number } | null;
+    if (result?.errcode !== 0) {
+      // Re-fetch a rejected token on the next scheduled attempt, never resend here.
+      if (result?.errcode === 40001 || result?.errcode === 40014 || result?.errcode === 42001) {
+        this.accessToken = "";
+        this.tokenExpiresAt = 0;
+      }
+      throw new Error(`[WeCom] 发送失败: ${result?.errcode ?? "缺少状态码"}`);
     }
   }
 
@@ -65,6 +75,9 @@ export class WecomNotifier implements Notifier {
 
     const url = `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${this.corpId}&corpsecret=${this.secret}`;
     const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`[WeCom] 获取 token 失败: HTTP ${response.status}`);
+    }
     const data = (await response.json()) as {
       access_token: string;
       expires_in: number;
@@ -72,9 +85,8 @@ export class WecomNotifier implements Notifier {
       errmsg: string;
     };
 
-    if (data.errcode !== 0 || !data.access_token) {
-      console.error(`[WeCom] 获取 token 失败: ${data.errmsg}`);
-      return "";
+    if (data?.errcode !== 0 || typeof data.access_token !== "string" || !data.access_token.trim()) {
+      throw new Error(`[WeCom] 获取 token 失败: ${data?.errcode ?? "缺少状态码或 token"}`);
     }
 
     this.accessToken = data.access_token;

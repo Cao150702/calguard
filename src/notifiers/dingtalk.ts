@@ -8,11 +8,13 @@ import type { Notifier, NotifyParams } from "../sources/types.js";
  */
 export class DingtalkNotifier implements Notifier {
   readonly name = "dingtalk_bot";
+  readonly deliveryId: string;
   private webhook: string;
   private secret?: string;
 
   constructor(opts: { webhook: string; secret?: string }) {
     this.webhook = opts.webhook;
+    this.deliveryId = crypto.createHash("sha256").update(opts.webhook).digest("hex");
     this.secret = opts.secret;
   }
 
@@ -47,13 +49,11 @@ export class DingtalkNotifier implements Notifier {
     });
 
     if (!response.ok) {
-      const text = await response.text();
-      console.error(`[Dingtalk] 发送失败: ${response.status} ${text}`);
-    } else {
-      const result = await response.json();
-      if (result.errcode !== 0) {
-        console.error(`[Dingtalk] API 错误: ${result.errmsg}`);
-      }
+      throw new Error(`[Dingtalk] 发送失败: HTTP ${response.status}`);
+    }
+    const result = await response.json();
+    if (result?.errcode !== 0) {
+      throw new Error(`[Dingtalk] API 错误: ${result?.errcode ?? "缺少状态码"}`);
     }
   }
 
