@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import cron from "node-cron";
+import { PartialFetchError } from "../sources/errors.js";
 import { ReminderRunner } from "./reminders.js";
 import type { CalendarEvent, CalendarSource, MessageSource, Notifier, NotifyParams } from "../sources/types.js";
 import type { CalGuardConfig } from "../config/schema.js";
@@ -128,6 +129,14 @@ export class CalGuardScheduler {
         console.error(`[Scheduler] ${source.name}: 拉取 ${messages.length} 条消息`);
       } catch (err) {
         failures.push(new Error(`消息源 ${source.name} 拉取或索引失败`, { cause: err }));
+        if (err instanceof PartialFetchError && err.partialResults.length > 0) {
+          try {
+            this.indexer.upsert(err.partialResults);
+            console.error(`[Scheduler] ${source.name}: 已保留 ${err.partialResults.length} 条部分结果，本次读取仍标记为失败`);
+          } catch (indexError) {
+            failures.push(new Error(`消息源 ${source.name} 部分结果索引失败`, { cause: indexError }));
+          }
+        }
         console.error(`[Scheduler] ${source.name} 拉取失败:`, err instanceof Error ? err.message : String(err));
       }
     }

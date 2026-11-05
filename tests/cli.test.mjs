@@ -39,3 +39,29 @@ for (const [scenario, exitCode, deliveries] of [
     }
   });
 }
+
+test('manual fetch preserves partial source results but exits nonzero', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'calguard-cli-fetch-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, ['--loader', './tests/cli-loader.mjs', 'dist/cli/index.js', 'fetch'], {
+    cwd: root, encoding: 'utf8', timeout: 10000,
+    env: { ...process.env, CALGUARD_TEST_DIR: dir, CALGUARD_TEST_SCENARIO: 'partial-mail' },
+  });
+  assert.equal(result.error, undefined); assert.equal(result.status, 1, result.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'indexed'), 'utf8').trim()), ['partial']);
+  assert.match(result.stderr, /已保留 1 条部分结果/); assert.match(result.stderr, /执行失败/);
+  assert.deepEqual(readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n'), ['mail']);
+});
+
+test('one-shot partial collection continues the existing delivery policy while reporting failure', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'calguard-cli-partial-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, ['--loader', './tests/cli-loader.mjs', 'dist/cli/index.js', 'start', '--once'], {
+    cwd: root, encoding: 'utf8', timeout: 10000,
+    env: { ...process.env, CALGUARD_TEST_DIR: dir, CALGUARD_TEST_SCENARIO: 'partial-mail',
+      CALGUARD_TEST_EVENT_START: new Date(Date.now() + 30 * 60000).toISOString() },
+  });
+  assert.equal(result.error, undefined); assert.equal(result.status, 1, result.stderr);
+  assert.equal(JSON.parse(readFileSync(join(dir, '.calguard', 'state.json'), 'utf8')).length, 2);
+  assert.match(result.stderr, /已保留 1 条部分结果/); assert.match(result.stderr, /执行失败/);
+});

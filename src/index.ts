@@ -1,3 +1,4 @@
+export { PartialFetchError } from "./sources/errors.js";
 export { AppleCalendarSource } from "./sources/calendar/apple.js";
 export { MacMailSource } from "./sources/messages/mac_mail.js";
 export { EmailSource } from "./sources/messages/email.js";

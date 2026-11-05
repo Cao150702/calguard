@@ -43,7 +43,7 @@ export interface CalendarSource {
 export interface MessageSource {
   readonly name: string;
 
-  /** 增量拉取指定时间之后的消息 */
+  /** 增量拉取消息；不完整读取应抛出带部分结果的 PartialFetchError，不能冒充完整成功。 */
   fetchMessages(since: Date): Promise<Message[]>;
 }
 

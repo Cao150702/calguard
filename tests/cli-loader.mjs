@@ -8,7 +8,7 @@ export class Command {
   command(name) { const command = new Command(name); this.commands.push(command); return command; }
   action(callback) { this.callback = callback; return this; }
   parse() { throw new Error('Async CLI actions must use parseAsync'); }
-  async parseAsync() { await this.commands.find(c => c.commandName === 'start').callback({ once: true, config: 'fake-config' }); }
+  async parseAsync() { await this.commands.find(c => c.commandName === process.argv[2]).callback({ once: true, config: 'fake-config', source: 'all' }); }
 }`;
 const fakeConfig = `
 export function ensureDataDir() {}
@@ -19,6 +19,7 @@ export function loadConfig() { return {
   llm: { provider: 'none', api_key: '', model: '', max_tokens: 1000 }
 }; }`;
 const fakePlugins = `
+import { PartialFetchError } from '${new URL('../dist/sources/errors.js', import.meta.url).href}';
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 const scenario = process.env.CALGUARD_TEST_SCENARIO;
@@ -35,7 +36,13 @@ export class AppleCalendarSource {
 }
 export class MacMailSource {
   name = 'fake-mail';
-  async fetchMessages() { record('mail'); if (scenario === 'combined') throw new Error('synthetic mail failure'); return []; }
+  async fetchMessages() {
+    record('mail');
+    if (scenario === 'combined') throw new Error('synthetic mail failure');
+    if (scenario === 'partial-mail') throw new PartialFetchError('synthetic incomplete mail', [new Error('synthetic folder failure')],
+      [{ id: 'partial', from: 'fake', to: [], subject: 'Synthetic', body: 'Synthetic context', timestamp: new Date(), source: 'email' }]);
+    return [];
+  }
 }
 export class EmailSource extends MacMailSource {}
 export class FeishuNotifier {
@@ -55,8 +62,11 @@ export async function resolve(specifier, context, nextResolve) {
   if (context.parentURL?.endsWith('/dist/cli/index.js')) {
     if (specifier === 'commander') return mocked(fakeCommander);
     if (specifier === '../config/loader.js') return mocked(fakeConfig);
-    if (specifier.startsWith('../sources/') || specifier.startsWith('../notifiers/')) return mocked(fakePlugins);
-    if (specifier === '../engine/indexer.js') return mocked('export class MessageIndexer {}');
+    if (specifier.startsWith('../sources/calendar/') || specifier.startsWith('../sources/messages/') || specifier.startsWith('../notifiers/')) return mocked(fakePlugins);
+    if (specifier === '../engine/indexer.js') return mocked(`
+      import { appendFileSync } from 'node:fs'; import { join } from 'node:path';
+      export class MessageIndexer { upsert(messages) { appendFileSync(join(process.env.CALGUARD_TEST_DIR, 'indexed'), JSON.stringify(messages.map(m => m.id)) + '\\n'); } }
+    `);
   }
   if (context.parentURL?.endsWith('/dist/scheduler/cron.js') && specifier === 'node:os') {
     return mocked('export function homedir() { return process.env.CALGUARD_TEST_DIR; }');

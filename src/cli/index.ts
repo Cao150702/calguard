@@ -8,6 +8,7 @@ import { FeishuNotifier } from "../notifiers/feishu.js";
 import { EmailNotifier } from "../notifiers/email.js";
 import { DingtalkNotifier } from "../notifiers/dingtalk.js";
 import { WecomNotifier } from "../notifiers/wecom.js";
+import { PartialFetchError } from "../sources/errors.js";
 import { CalGuardScheduler } from "../scheduler/cron.js";
 import { MessageIndexer } from "../engine/indexer.js";
 import { extractKeywords } from "../engine/extractor.js";
@@ -171,6 +172,7 @@ program
     const { messageSources } = createPlugins(config);
     const indexer = new MessageIndexer();
     const since = new Date(Date.now() - config.engine.lookback_days * 86400000);
+    const failures: Error[] = [];
 
     for (const source of messageSources) {
       if (opts.source !== "all" && source.name !== opts.source) continue;
@@ -180,8 +182,20 @@ program
         indexer.upsert(messages);
         console.error(`[Fetch] ${source.name}: ${messages.length} 条消息`);
       } catch (err) {
-        console.error(`[Fetch] ${source.name} 失败:`, (err as Error).message);
+        failures.push(new Error(`消息源 ${source.name} 拉取或索引失败`, { cause: err }));
+        if (err instanceof PartialFetchError && err.partialResults.length > 0) {
+          try {
+            indexer.upsert(err.partialResults);
+            console.error(`[Fetch] ${source.name}: 已保留 ${err.partialResults.length} 条部分结果，本次读取仍标记为失败`);
+          } catch (indexError) {
+            failures.push(new Error(`消息源 ${source.name} 部分结果索引失败`, { cause: indexError }));
+          }
+        }
+        console.error(`[Fetch] ${source.name} 失败:`, err instanceof Error ? err.message : String(err));
       }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `消息拉取结束，共 ${failures.length} 项失败`);
     }
   });
 

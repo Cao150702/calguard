@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { PartialFetchError } from '../dist/sources/errors.js';
 import { CalGuardScheduler } from '../dist/scheduler/cron.js';
 
 function fixture(t) {
@@ -22,6 +23,8 @@ function fixture(t) {
   const messages = [];
   const notifiers = [{ name: 'fake', async send(params) { sent.push(params); } }];
   globalThis.__calguardSchedules = [];
+  globalThis.__calguardIndexedMessages = [];
+  globalThis.__calguardIndexFailure = false;
   return { sent, config, notifiers, calendars, messages, setTime: (time) => { now = new Date(`2026-11-05T${time}Z`); },
     scheduler: () => new CalGuardScheduler(config, calendars, messages, notifiers, { now: () => now, statePath: join(dir, 'state.json') }) };
 }
@@ -102,4 +105,30 @@ test('a null message-source rejection is aggregated without aborting another sou
     assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 1); return true;
   });
   assert.equal(continued, true); assert.equal(f.sent.length, 1);
+});
+
+test('partial source messages are indexed and remain usable without hiding collection failure', async (t) => {
+  const f = fixture(t);
+  const partial = { id: 'partial-mail', from: 'synthetic', to: [], subject: 'Synthetic', body: 'Synthetic context', timestamp: new Date('2026-11-05T09:00:00Z'), source: 'email' };
+  f.messages.push({ name: 'partial', async fetchMessages() { throw new PartialFetchError('partial folder failure', [new Error('synthetic')], [partial]); } });
+  f.config.engine.skip_summary_if_no_match = true; f.setTime('09:30:00');
+  await assert.rejects(f.scheduler().runOnce(), (error) => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 1); return true;
+  });
+  assert.deepEqual(globalThis.__calguardIndexedMessages, [partial]);
+  assert.equal(f.sent.length, 1); assert.deepEqual(f.sent[0].messages, [partial]);
+  assert.match(f.sent[0].brief, /synthetic: Synthetic/);
+});
+
+test('partial indexing errors are reported separately and do not suppress other safe work', async (t) => {
+  const f = fixture(t); let nextSource = false;
+  globalThis.__calguardIndexFailure = true;
+  f.messages.push({ name: 'partial', async fetchMessages() { throw new PartialFetchError('partial', [new Error('fetch')], [{ id: 'synthetic' }]); } },
+    { name: 'next', async fetchMessages() { nextSource = true; return []; } });
+  f.setTime('09:30:00');
+  await assert.rejects(f.scheduler().runOnce(), (error) => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 2);
+    assert.match(error.errors[1].message, /部分结果索引失败/); return true;
+  });
+  assert.equal(nextSource, true); assert.equal(f.sent.length, 1);
 });
