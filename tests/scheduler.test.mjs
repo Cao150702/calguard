@@ -19,10 +19,11 @@ function fixture(t) {
   const event = { id: 'meeting', title: 'Synthetic meeting', start: new Date('2026-11-05T10:30:00Z'),
     end: new Date('2026-11-05T11:30:00Z'), attendees: [], source: 'fake' };
   const calendars = [{ name: 'fake', async fetchEvents() { return [event]; } }];
+  const messages = [];
   const notifiers = [{ name: 'fake', async send(params) { sent.push(params); } }];
   globalThis.__calguardSchedules = [];
-  return { sent, config, notifiers, setTime: (time) => { now = new Date(`2026-11-05T${time}Z`); },
-    scheduler: () => new CalGuardScheduler(config, calendars, [], notifiers, { now: () => now, statePath: join(dir, 'state.json') }) };
+  return { sent, config, notifiers, calendars, messages, setTime: (time) => { now = new Date(`2026-11-05T${time}Z`); },
+    scheduler: () => new CalGuardScheduler(config, calendars, messages, notifiers, { now: () => now, statePath: join(dir, 'state.json') }) };
 }
 
 test('daemon registers minute reminder checks rather than hourly checks, with no real timers', async (t) => {
@@ -62,4 +63,43 @@ test('graceful stop waits for active delivery and removes its lock before exit',
   await new Promise((resolve) => setImmediate(resolve)); assert.equal(stopped, false);
   release(); await stopping; assert.equal(stopped, true);
   await f.scheduler().runOnce(); assert.equal(f.sent.length, 1);
+});
+
+test('one-shot aggregates failures across stages and continues independent work', async (t) => {
+  const f = fixture(t); const attempted = [];
+  f.messages.push(
+    { name: 'mail-one', async fetchMessages() { attempted.push('mail-one'); throw new Error('first outage'); } },
+    { name: 'mail-two', async fetchMessages() { attempted.push('mail-two'); throw new Error('second outage'); } },
+    { name: 'mail-good', async fetchMessages() { attempted.push('mail-good'); return []; } },
+  );
+  f.calendars.unshift({ name: 'calendar-bad', async fetchEvents() { attempted.push('calendar-bad'); throw new Error('calendar outage'); } });
+  f.notifiers.unshift({ name: 'notifier-bad', async send() { attempted.push('notifier-bad'); throw new Error('notification outage'); } });
+  f.setTime('09:30:00');
+  await assert.rejects(f.scheduler().runOnce(), (error) => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 4);
+    assert.match(error.message, /4 项失败/); return true;
+  });
+  assert.deepEqual(attempted, ['mail-one', 'mail-two', 'mail-good', 'calendar-bad', 'notifier-bad']);
+  assert.equal(f.sent.length, 1);
+  f.messages.length = 0; f.calendars.shift(); f.notifiers.shift();
+  await f.scheduler().runOnce(); assert.equal(f.sent.length, 1);
+});
+
+test('daemon message cron catches aggregated failures rather than creating an unhandled rejection', async (t) => {
+  const f = fixture(t); f.messages.push({ name: 'bad-mail', async fetchMessages() { throw new Error('synthetic'); } });
+  const scheduler = f.scheduler(); scheduler.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  await assert.doesNotReject(globalThis.__calguardSchedules[0].callback());
+  await scheduler.stop();
+});
+
+test('a null message-source rejection is aggregated without aborting another source or reminder', async (t) => {
+  const f = fixture(t); let continued = false;
+  f.messages.push({ name: 'bad', async fetchMessages() { throw null; } },
+    { name: 'good', async fetchMessages() { continued = true; return []; } });
+  f.setTime('09:30:00');
+  await assert.rejects(f.scheduler().runOnce(), (error) => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 1); return true;
+  });
+  assert.equal(continued, true); assert.equal(f.sent.length, 1);
 });

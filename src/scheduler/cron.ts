@@ -61,7 +61,9 @@ export class CalGuardScheduler {
     this.jobs.push(cron.schedule(fetchCron, async () => {
       if (this.stopping) return;
       console.error("[Scheduler] 开始拉取消息...");
-      await this.fetchAndUpdateIndex();
+      await this.fetchAndUpdateIndex().catch((err) => {
+        console.error("[Scheduler] 消息拉取失败:", err);
+      });
     }));
 
     // 任务二：每分钟检查到期提醒；延迟检查会在日程开始前补发。
@@ -96,17 +98,25 @@ export class CalGuardScheduler {
   async runOnce() {
     console.error("[CalGuard] 执行单次完整流程...");
 
-    // Step 1: 拉取消息更新索引
-    await this.fetchAndUpdateIndex();
-
-    // 单次和守护模式共用到期判断与持久化去重逻辑。
-    await this.reminders.check();
+    const failures: unknown[] = [];
+    // A failed source does not prevent independent sources or cached-message reminders.
+    for (const step of [() => this.fetchAndUpdateIndex(), () => this.reminders.check()]) {
+      try {
+        await step();
+      } catch (err) {
+        failures.push(...(err instanceof AggregateError ? err.errors : [err]));
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `单次流程结束，共 ${failures.length} 项失败`);
+    }
     console.error("[CalGuard] 单次流程完成");
   }
 
   /** 拉取消息并更新索引 */
   private async fetchAndUpdateIndex() {
     const since = new Date(this.now().getTime() - this.config.engine.lookback_days * 86400000);
+    const failures: Error[] = [];
 
     for (const source of this.messageSources) {
       try {
@@ -117,8 +127,12 @@ export class CalGuardScheduler {
         }
         console.error(`[Scheduler] ${source.name}: 拉取 ${messages.length} 条消息`);
       } catch (err) {
-        console.error(`[Scheduler] ${source.name} 拉取失败:`, (err as Error).message);
+        failures.push(new Error(`消息源 ${source.name} 拉取或索引失败`, { cause: err }));
+        console.error(`[Scheduler] ${source.name} 拉取失败:`, err instanceof Error ? err.message : String(err));
       }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `消息更新完成，共 ${failures.length} 项失败`);
     }
   }
 

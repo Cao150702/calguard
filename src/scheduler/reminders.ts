@@ -105,6 +105,7 @@ export class ReminderRunner {
     this.pruneState();
     if (this.reminders.length === 0 || this.options.notifiers.length === 0) return;
     const maxOffset = Math.max(...this.reminders.map((r) => r.offset));
+    const failures: Error[] = [];
 
     for (const source of this.options.calendarSources) {
       const from = this.now();
@@ -114,7 +115,8 @@ export class ReminderRunner {
       try {
         events = await source.fetchEvents(from, to);
       } catch (err) {
-        console.error(`[Scheduler] ${source.name} 检查失败:`, (err as Error).message);
+        failures.push(new Error(`日历源 ${source.name} 检查失败`, { cause: err }));
+        console.error(`[Scheduler] ${source.name} 检查失败:`, err instanceof Error ? err.message : String(err));
         continue;
       }
       for (const event of events) {
@@ -142,7 +144,8 @@ export class ReminderRunner {
           try {
             params = await this.options.prepareNotification(event, label);
           } catch (err) {
-            console.error(`[Scheduler] ${event.title} 简报失败:`, (err as Error).message);
+            failures.push(new Error(`日程 ${event.title} (${label}) 简报失败`, { cause: err }));
+            console.error(`[Scheduler] ${event.title} 简报失败:`, err instanceof Error ? err.message : String(err));
             continue;
           }
           if (!params) continue;
@@ -152,7 +155,8 @@ export class ReminderRunner {
             try {
               await notifier.send(params);
             } catch (err) {
-              console.error(`[Scheduler] ${notifier.name} 发送失败:`, (err as Error).message);
+              failures.push(new Error(`通知渠道 ${notifier.name} 发送日程 ${event.title} (${label}) 失败`, { cause: err }));
+              console.error(`[Scheduler] ${notifier.name} 发送失败:`, err instanceof Error ? err.message : String(err));
               continue; // Retry only failed channels on the next check.
             }
             this.sentRecords.push({
@@ -166,11 +170,19 @@ export class ReminderRunner {
               notifier: key,
             });
             // Persist each successful channel before attempting another delivery.
-            this.saveState();
+            try {
+              this.saveState();
+            } catch (err) {
+              failures.push(new Error("通知已发送但状态保存失败，停止后续发送并保留核对锁", { cause: err }));
+              throw new AggregateError(failures, `提醒检查中断，共 ${failures.length} 项失败`);
+            }
             console.error(`[Scheduler] 已通过 ${notifier.name} 发送通知: ${event.title} (${label})`);
           }
         }
       }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `提醒检查完成，共 ${failures.length} 项失败`);
     }
   }
 

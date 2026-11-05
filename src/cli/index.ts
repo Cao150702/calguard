@@ -323,4 +323,8 @@ program
       })
   );
 
-program.parse();
+program.parseAsync().catch((err) => {
+  console.error("[CalGuard] 执行失败:", err);
+  // Let pending stdout writes flush; do not report a successful one-shot run.
+  process.exitCode = 1;
+});

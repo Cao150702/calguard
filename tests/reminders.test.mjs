@@ -116,7 +116,7 @@ test('partial delivery persists each success and retries only failed channels af
     { name: 'a', async send() { calls.push('a'); } },
     { name: 'b', async send() { calls.push('b'); if (fail) throw new Error('synthetic outage'); } },
   ];
-  f.setTime('09:30:00'); await f.runner().check();
+  f.setTime('09:30:00'); await assert.rejects(f.runner().check(), AggregateError);
   assert.equal(f.records().length, 1);
   fail = false; await f.runner().check(); await f.runner().check();
   assert.deepEqual(calls, ['a', 'b', 'b']);
@@ -133,7 +133,7 @@ test('two channels of the same type are each tracked', async (t) => {
 test('all failed channels remain retryable', async (t) => {
   const f = fixture(t); let attempts = 0;
   f.config.notifiers = [{ name: 'bad', async send() { attempts++; throw new Error('synthetic outage'); } }];
-  f.setTime('09:30:00'); const runner = f.runner(); await runner.check(); await runner.check();
+  f.setTime('09:30:00'); const runner = f.runner(); await assert.rejects(runner.check(), AggregateError); await assert.rejects(runner.check(), AggregateError);
   assert.equal(attempts, 2); assert.equal(runner.sentCount, 0);
 });
 
@@ -152,7 +152,7 @@ test('a failing calendar does not block other sources and is retried', async (t)
   f.config.calendarSources.unshift({ name: 'flaky', async fetchEvents() {
     if (failed) throw new Error('synthetic outage'); return [event()];
   } });
-  f.setTime('09:30:00'); const runner = f.runner(); await runner.check(); assert.equal(f.sent.length, 1);
+  f.setTime('09:30:00'); const runner = f.runner(); await assert.rejects(runner.check(), AggregateError); assert.equal(f.sent.length, 1);
   failed = false; await runner.check(); assert.equal(f.sent.length, 2);
 });
 
@@ -162,7 +162,7 @@ test('brief errors do not block another event and remain retryable', async (t) =
   f.config.prepareNotification = async (e, label) => {
     if (e.id === 'meeting' && failed) throw new Error('synthetic brief failure'); return prepare(e, label);
   };
-  f.setTime('09:30:00'); const runner = f.runner(); await runner.check(); assert.equal(f.sent.length, 1);
+  f.setTime('09:30:00'); const runner = f.runner(); await assert.rejects(runner.check(), AggregateError); assert.equal(f.sent.length, 1);
   failed = false; await runner.check(); assert.equal(f.sent.length, 2);
 });
 
@@ -272,7 +272,7 @@ test('channel identity survives reordering and credential-independent reconstruc
   const f = fixture(t); const calls = []; let fail = true;
   const a = { name: 'email', deliveryId: 'destination-a', async send() { calls.push('a'); } };
   const b = { name: 'email', deliveryId: 'destination-b', async send() { calls.push('b'); if (fail) throw new Error('synthetic outage'); } };
-  f.config.notifiers = [a, b]; f.setTime('09:30:00'); await f.runner().check();
+  f.config.notifiers = [a, b]; f.setTime('09:30:00'); await assert.rejects(f.runner().check(), AggregateError);
   fail = false; f.config.notifiers = [b, a]; await f.runner().check();
   assert.deepEqual(calls, ['a', 'b', 'b']);
 });
@@ -289,3 +289,54 @@ test('delivery IDs are namespaced by notifier type', async (t) => {
   f.config.notifiers.push({ name: 'different-provider', deliveryId: 'shared-id', async send(params) { f.sent.push(params); } });
   f.setTime('09:30:00'); await f.runner().check(); await f.runner().check(); assert.equal(f.sent.length, 2);
 });
+
+test('calendar, brief and channel failures aggregate after independent deliveries finish', async (t) => {
+  const f = fixture(t); const prepare = f.config.prepareNotification; const calls = [];
+  f.config.calendarSources.unshift({ name: 'bad-calendar', async fetchEvents() { throw new Error('calendar outage'); } });
+  f.setEvents([event(at('10:30:00'), { id: 'bad-brief' }), event()]);
+  f.config.prepareNotification = async (e, label) => {
+    if (e.id === 'bad-brief') throw new Error('brief outage'); return prepare(e, label);
+  };
+  f.config.notifiers.unshift({ name: 'bad-channel', async send() { calls.push('failed'); throw new Error('channel outage'); } });
+  f.setTime('09:30:00');
+  await assert.rejects(f.runner().check(), (error) => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 3);
+    assert.match(error.errors[0].message, /bad-calendar/);
+    assert.match(error.errors[1].message, /简报失败/);
+    assert.match(error.errors[2].message, /bad-channel/);
+    return true;
+  });
+  assert.deepEqual(calls, ['failed']); assert.equal(f.sent.length, 1); assert.equal(f.records().length, 1);
+  assert.deepEqual(readdirSync(f.dir), ['state.json']);
+});
+
+test('unsafe state failure aborts later channels while preserving earlier failure details', async (t) => {
+  const f = fixture(t); let later = false;
+  f.config.notifiers = [
+    { name: 'outage', async send() { throw new Error('channel outage'); } },
+    { name: 'delivered', async send(params) { f.sent.push(params); mkdirSync(f.statePath); } },
+    { name: 'later', async send() { later = true; } },
+  ];
+  f.setTime('09:30:00');
+  await assert.rejects(f.runner().check(), (error) => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 2);
+    assert.match(error.errors[0].message, /outage/); assert.match(error.errors[1].message, /状态保存失败/); return true;
+  });
+  assert.equal(f.sent.length, 1); assert.equal(later, false);
+  assert.deepEqual(readdirSync(f.dir).sort(), ['state.json', 'state.json.lock']);
+});
+
+for (const thrown of [undefined, null, 'string rejection']) {
+  test(`non-Error failure ${String(thrown)} does not abort other calendars, briefs or channels`, async (t) => {
+    const f = fixture(t); const prepare = f.config.prepareNotification;
+    f.config.calendarSources.unshift({ name: 'bad-calendar', async fetchEvents() { throw thrown; } });
+    f.setEvents([event(at('10:30:00'), { id: 'bad-brief' }), event()]);
+    f.config.prepareNotification = async (e, label) => { if (e.id === 'bad-brief') throw thrown; return prepare(e, label); };
+    f.config.notifiers.unshift({ name: 'bad-notifier', async send() { throw thrown; } });
+    f.setTime('09:30:00');
+    await assert.rejects(f.runner().check(), (error) => {
+      assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 3); return true;
+    });
+    assert.equal(f.sent.length, 1); assert.equal(f.records().length, 1);
+  });
+}
