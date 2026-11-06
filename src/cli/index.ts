@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { Command } from "commander";
 import { loadConfig, ensureDataDir } from "../config/loader.js";
 import { AppleCalendarSource } from "../sources/calendar/apple.js";

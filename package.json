@@ -10,13 +10,12 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli/index.ts",
-    "start": "node dist/cli/index.ts start",
-    "setup": "node dist/cli/index.ts setup",
-    "fetch": "node dist/cli/index.ts fetch",
-    "events": "node dist/cli/index.ts events",
-    "preview": "node dist/cli/index.ts preview",
-    "status": "node dist/cli/index.ts status",
-    "config:validate": "node dist/cli/index.ts config validate",
+    "start": "node dist/cli/index.js start",
+    "fetch": "node dist/cli/index.js fetch",
+    "events": "node dist/cli/index.js events",
+    "preview": "node dist/cli/index.js preview",
+    "status": "node dist/cli/index.js status",
+    "config:validate": "node dist/cli/index.js config validate",
     "test": "npm run build && node --loader ./tests/scheduler-loader.mjs --test tests/*.test.mjs"
   },
   "dependencies": {

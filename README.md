@@ -40,6 +40,8 @@ npm install
 npm run build
 ```
 
+构建后的入口是 `dist/cli/index.js`。可用 `node dist/cli/index.js --help` 查看命令，或通过 npm 脚本运行，例如 `npm run events -- --hours 24`、`npm start -- --once`。命令参数需放在 `--` 后；不带 `--once` 的 `npm start` 会启动守护进程。安装包的 `calguard` 命令指向同一 JavaScript 入口。
+
 ### 三步上手（零配置）
 
 如果你使用 Mac Mail 和 Apple Calendar，无需任何额外配置：
@@ -64,6 +66,8 @@ cp config.example.yaml config.yaml
 # 编辑 config.yaml，按需启用数据源和通知渠道
 npx calguard config validate
 ```
+
+`setup` 交互式向导尚未实现，因此不提供 `npm run setup` 或 `calguard setup`。请按上述步骤复制并编辑配置，再运行 `npm run config:validate` 校验；不会自动创建或覆盖配置文件。
 
 最小配置示例（纯本地运行，无需 API Key）：
 
